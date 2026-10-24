@@ -1,0 +1,12 @@
+﻿{
+    "version_number":  "1.0.0",
+    "name":  "HexTweaks",
+    "website_url":  "",
+    "description":  "Makes Hallowed Concepts hexes only punish the player holding them. Configurable.",
+    "dependencies":  [
+                         "bbepis-BepInExPack-5.4.2121",
+                         "RiskofThunder-HookGenPatcher-1.2.9",
+                         "RiskofThunder-R2API_ContentManagement-1.1.0",
+                         "RiskofThunder-R2API_RecalculateStats-1.7.0"
+                     ]
+}
