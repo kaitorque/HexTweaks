@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using BepInEx;
 using BepInEx.Configuration;
@@ -51,6 +52,24 @@ namespace HexTweaks
         private ConfigEntry<bool> greedEnabled;
         private ConfigEntry<float> greedGoldReductionPerStack;
         private ConfigEntry<bool> mimicryEnabled;
+        private ConfigEntry<bool> hexColorsEnabled;
+        private ConfigEntry<bool> logHexMaterials;
+        private ConfigEntry<float> stoneGlow;
+        private ConfigEntry<float> runeGlow;
+        private static readonly int ColorId = Shader.PropertyToID("_Color");
+        private static readonly int EmColorId = Shader.PropertyToID("_EmColor");
+        private static readonly int EmTexId = Shader.PropertyToID("_EmTex");
+        private static readonly int EmPowerId = Shader.PropertyToID("_EmPower");
+        private static readonly int MainTexId = Shader.PropertyToID("_MainTex");
+        private static readonly Color WhiteRuneAlbedo = new Color(0.45f, 0.45f, 0.45f);
+        private const float AutoRuneLuminanceThreshold = 0.45f;        private readonly List<HexColor> hexColors = new List<HexColor>();
+        private readonly Dictionary<ItemIndex, HexColor> hexColorsByItem = new Dictionary<ItemIndex, HexColor>();
+        private readonly Dictionary<(ItemIndex, Material), RecoloredMaterial> recoloredMaterials = new Dictionary<(ItemIndex, Material), RecoloredMaterial>();
+        private readonly HashSet<Material> recoloredMaterialSet = new HashSet<Material>();
+        private FileSystemWatcher configWatcher;
+        private volatile bool configFileChanged;
+        private float configReloadTime;
+        private readonly HashSet<ItemIndex> loggedHexes = new HashSet<ItemIndex>();
 
         private void Awake()
         {
@@ -88,6 +107,33 @@ namespace HexTweaks
                 "Gold reduction per stack, applied multiplicatively. 0.25 = 25% less gold with 1 stack, 44% less with 2.");
             mimicryEnabled = Config.Bind("Hex of Mimicry", "Enabled", true,
                 "Mimics spawned by Hex of Mimicry only target the player who spawned them.");
+            hexColorsEnabled = Config.Bind("Hex Colors", "Enabled", true,
+                "Recolors each hex pickup's stone and runes so they can be told apart.");
+            stoneGlow = Config.Bind("Hex Colors", "Stone Glow", 4.5f,
+                "How strongly the stone glows in its own color. The glow scales with the stone color's brightness, so darker colors glow less. 0 = no glow, tint only.");
+            runeGlow = Config.Bind("Hex Colors", "White Rune Glow", 1.5f,
+                "Glow strength of white runes. Raise it if the runes are hard to see against the stone.");
+            logHexMaterials = Config.Bind("Hex Colors", "Log Materials", false,
+                "Logs each hex pickup's renderers and material properties once per session. Debug aid.");
+            BindHexColor("Hex of Patience", () => DLC4Content.Items.OutOfTPRadius, "#E02020");
+            BindHexColor("Hex of Pain", () => DLC4Content.Items.HexCurse, "#6A0F1A");
+            BindHexColor("Hex of Rain", () => DLC4Content.Items.IncreasedDifficulty, "#2040E0");
+            BindHexColor("Hex of Acceleration", () => DLC4Content.Items.SlipperyGround, "#20B0C0");
+            BindHexColor("Hex of Strife", () => DLC4Content.Items.HexMountain, "#7A20D8");
+            BindHexColor("Hex of Leaping", () => DLC4Content.Items.WeakAssHamstring, "#609A00");
+            BindHexColor("Hex of Ossification", () => DLC4Content.Items.BarrierEnemiesOnKill, "#D0D0D0");
+            BindHexColor("Hex of Loss", () => DLC4Content.Items.RoamingItemDisable, "#707070");
+            BindHexColor("Hex of Greed", () => DLC4Content.Items.ShareItemsWithEnemies, "#FFCC00");
+            BindHexColor("Hex of Misfortune", () => DLC4Content.Items.RandomDebuffOnInteract, "#FF6000");
+            BindHexColor("Hex of Mimicry", () => DLC4Content.Items.Mimicry, "#20A030");
+            BindHexColor("Hex of Famine", () => DLC4Content.Items.LowerHealing, "#D010D0");
+            BindHexColor("Hex of Haunting", () => DLC4Content.Items.HexHaunting, "#FF60B0");
+            BindHexColor("Hex of Blindness", () => DLC4Content.Items.Blindness, "#1A1A1A");
+            ItemCatalog.availability.CallWhenAvailable(IndexHexColors);
+            PickupCatalog.availability.CallWhenAvailable(LoadHexIcons);
+            On.RoR2.PickupDisplay.OnModelInstanceDiscovered += PickupDisplay_OnModelInstanceDiscovered;
+            Config.SettingChanged += (_, __) => ApplyAllHexColors();
+            WatchConfigFile();
 
             On.RoR2.Util.GetTotalItemCountFromTeam += Util_GetTotalItemCountFromTeam;
             R2API.RecalculateStatsAPI.GetStatCoefficients += RecalculateStatsAPI_GetStatCoefficients;
@@ -142,7 +188,7 @@ namespace HexTweaks
             {
                 Addressables.LoadAssetAsync<Sprite>(iconReference.RuntimeKey).Completed += handle =>
                 {
-                    if (handle.Status == AsyncOperationStatus.Succeeded)
+                    if (handle.Status == AsyncOperationStatus.Succeeded && !ossificationBuff.iconSprite)
                     {
                         ossificationBuff.iconSprite = handle.Result;
                     }
@@ -404,6 +450,455 @@ namespace HexTweaks
         private static string Pct(float value)
         {
             return Mathf.RoundToInt(value * 100f) + "%";
+        }
+
+        private void BindHexColor(string section, System.Func<ItemDef> getItem, string stoneHex)
+        {
+            ColorUtility.TryParseHtmlString(stoneHex, out Color stone);
+            hexColors.Add(new HexColor
+            {
+                name = section,
+                getItem = getItem,
+                stone = Config.Bind(section, "Stone Color", stone, "Stone tint and glow color. Each hex has its own hue so they can be told apart from a distance."),
+                runeColor = Config.Bind(section, "Rune Color", RuneColor.Auto, "Auto picks black runes on light stones and white runes on dark ones."),
+            });
+        }
+
+        private void IndexHexColors()
+        {
+            foreach (HexColor hex in hexColors)
+            {
+                ItemDef item = hex.getItem();
+                if (item && item.itemIndex != ItemIndex.None)
+                {
+                    hexColorsByItem[item.itemIndex] = hex;
+                }
+                else
+                {
+                    Logger.LogWarning($"{hex.name} item not found; it won't be recolored.");
+                }
+            }
+        }
+
+        private void PickupDisplay_OnModelInstanceDiscovered(On.RoR2.PickupDisplay.orig_OnModelInstanceDiscovered orig, PickupDisplay self, bool isNew)
+        {
+            orig(self, isNew);
+            List<Renderer> renderers = self.modelRenderers;
+            if (renderers == null || renderers.Count == 0)
+            {
+                return;
+            }
+            PickupDef pickupDef = PickupCatalog.GetPickupDef(self.GetPickupIndex());
+            if (pickupDef == null || !hexColorsByItem.TryGetValue(pickupDef.itemIndex, out HexColor hex))
+            {
+                return;
+            }
+            if (logHexMaterials.Value && loggedHexes.Add(pickupDef.itemIndex))
+            {
+                LogHexMaterials(hex.name, renderers);
+            }
+            foreach (Renderer renderer in renderers)
+            {
+                if (!(renderer is MeshRenderer) && !(renderer is SkinnedMeshRenderer))
+                {
+                    continue;
+                }
+                Material[] materials = renderer.sharedMaterials;
+                for (int i = 0; i < materials.Length; i++)
+                {
+                    if (materials[i])
+                    {
+                        materials[i] = GetRecoloredMaterial(pickupDef.itemIndex, hex, materials[i]);
+                    }
+                }
+                renderer.sharedMaterials = materials;
+            }
+        }
+
+        private Material GetRecoloredMaterial(ItemIndex itemIndex, HexColor hex, Material original)
+        {
+            if (recoloredMaterials.TryGetValue((itemIndex, original), out RecoloredMaterial entry))
+            {
+                return entry.material;
+            }
+            if (recoloredMaterialSet.Contains(original))
+            {
+                return original;
+            }
+            entry = new RecoloredMaterial
+            {
+                material = new Material(original) { name = original.name + " (" + hex.name + ")" },
+                original = original,
+                hex = hex,
+                isRunes = original.name.Contains("Rune"),
+            };
+            ApplyHexColor(entry);
+            recoloredMaterials[(itemIndex, original)] = entry;
+            recoloredMaterialSet.Add(entry.material);
+            return entry.material;
+        }
+
+        // Pickups share one recolored material per hex, so editing it in place updates every pickup already spawned.
+        private void ApplyHexColor(RecoloredMaterial entry)
+        {
+            Material material = entry.material;
+            if (!material || !entry.original)
+            {
+                return;
+            }
+            material.CopyPropertiesFromMaterial(entry.original);
+            if (!hexColorsEnabled.Value)
+            {
+                return;
+            }
+            if (entry.isRunes)
+            {
+                if (ResolveRuneColor(entry.hex) == RuneColor.White)
+                {
+                    material.SetColor(ColorId, WhiteRuneAlbedo);
+                    material.SetColor(EmColorId, Color.white * runeGlow.Value);
+                }
+                else
+                {
+                    material.SetColor(ColorId, Color.black);
+                    material.SetColor(EmColorId, Color.black);
+                }
+                return;
+            }
+            material.SetColor(ColorId, entry.hex.stone.Value);
+            if (stoneGlow.Value > 0f)
+            {
+                material.SetTexture(EmTexId, entry.original.GetTexture(MainTexId));
+                material.SetColor(EmColorId, entry.hex.stone.Value * stoneGlow.Value);
+                material.SetFloat(EmPowerId, 1f);
+            }
+        }
+
+        private void ApplyAllHexColors()
+        {
+            foreach (RecoloredMaterial entry in recoloredMaterials.Values)
+            {
+                ApplyHexColor(entry);
+            }
+            foreach (HexColor hex in hexColors)
+            {
+                ApplyHexIcon(hex);
+            }
+        }
+
+        private void LoadHexIcons()
+        {
+            foreach (HexColor hex in hexColors)
+            {
+                ItemDef item = hex.getItem();
+                if (!item)
+                {
+                    continue;
+                }
+                AssetReferenceT<Sprite> iconReference = item.GetIconReference();
+                if (iconReference != null && iconReference.RuntimeKeyIsValid())
+                {
+                    Addressables.LoadAssetAsync<Sprite>(iconReference.RuntimeKey).Completed += handle =>
+                    {
+                        if (handle.Status == AsyncOperationStatus.Succeeded)
+                        {
+                            SetupHexIcon(hex, item, handle.Result);
+                        }
+                    };
+                }
+                else
+                {
+#pragma warning disable CS0618
+                    SetupHexIcon(hex, item, item.pickupIconSprite);
+#pragma warning restore CS0618
+                }
+            }
+        }
+
+        private void SetupHexIcon(HexColor hex, ItemDef item, Sprite original)
+        {
+            if (!original)
+            {
+                Logger.LogWarning($"{hex.name} icon not found; it won't be recolored.");
+                return;
+            }
+            Rect rect = original.textureRect;
+            int width = Mathf.RoundToInt(rect.width);
+            int height = Mathf.RoundToInt(rect.height);
+            Texture source = original.texture;
+            RenderTexture rt = RenderTexture.GetTemporary(source.width, source.height, 0, RenderTextureFormat.ARGB32, RenderTextureReadWrite.sRGB);
+            Graphics.Blit(source, rt);
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = rt;
+            var texture = new Texture2D(width, height, TextureFormat.RGBA32, false) { name = original.name + " (" + hex.name + ")" };
+            texture.ReadPixels(new Rect(rect.x, rect.y, width, height), 0, 0);
+            texture.Apply();
+            RenderTexture.active = previous;
+            RenderTexture.ReleaseTemporary(rt);
+
+            hex.originalIconPixels = texture.GetPixels32();
+            hex.iconClasses = ClassifyIcon(hex.originalIconPixels, width, height);
+            hex.originalIcon = original;
+            hex.originalIconReference = item.pickupIconSpriteReference;
+            hex.icon = Sprite.Create(texture, new Rect(0, 0, width, height), new Vector2(0.5f, 0.5f), original.pixelsPerUnit);
+            hex.icon.name = texture.name;
+            hex.item = item;
+            ApplyHexIcon(hex);
+
+            if (logHexMaterials.Value)
+            {
+                string dir = System.IO.Path.Combine(Paths.ConfigPath, "HexTweaksIcons");
+                Directory.CreateDirectory(dir);
+                var originalCopy = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                originalCopy.SetPixels32(hex.originalIconPixels);
+                File.WriteAllBytes(System.IO.Path.Combine(dir, hex.name + " original.png"), originalCopy.EncodeToPNG());
+                File.WriteAllBytes(System.IO.Path.Combine(dir, hex.name + " recolored.png"), texture.EncodeToPNG());
+                Destroy(originalCopy);
+            }
+        }
+
+        private void ApplyHexIcon(HexColor hex)
+        {
+            if (!hex.icon || hex.originalIconPixels == null)
+            {
+                return;
+            }
+            bool enabled = hexColorsEnabled.Value;
+            Sprite sprite = enabled ? hex.icon : hex.originalIcon;
+            if (enabled)
+            {
+                Texture2D texture = hex.icon.texture;
+                texture.SetPixels32(RecolorIcon(hex.originalIconPixels, hex.iconClasses, hex.stone.Value, ResolveRuneColor(hex) == RuneColor.White));
+                texture.Apply();
+            }
+#pragma warning disable CS0618
+            hex.item.pickupIconSprite = sprite;
+#pragma warning restore CS0618
+            hex.item.pickupIconSpriteReference = enabled ? new AssetReferenceT<Sprite>("") : hex.originalIconReference ?? new AssetReferenceT<Sprite>("");
+            PickupDef pickupDef = PickupCatalog.GetPickupDef(PickupCatalog.FindPickupIndex(hex.item.itemIndex));
+            if (pickupDef != null)
+            {
+                pickupDef.iconSprite = sprite;
+                pickupDef.iconTexture = sprite.texture;
+                pickupDef.iconSpriteReference = hex.item.pickupIconSpriteReference;
+            }
+            if (ossificationBuff && hex.item == DLC4Content.Items.BarrierEnemiesOnKill)
+            {
+                ossificationBuff.iconSprite = sprite;
+            }
+        }
+
+        // Saturated yellow-green pixels are either the outline ring (near the transparent edge) or the runes (interior).
+        private static IconPixel[] ClassifyIcon(Color32[] source, int width, int height)
+        {
+            const int edgeRadius = 6;
+            var result = new IconPixel[source.Length];
+            for (int y = 0; y < height; y++)
+            {
+                for (int x = 0; x < width; x++)
+                {
+                    int i = y * width + x;
+                    Color32 px = source[i];
+                    if (px.a == 0)
+                    {
+                        result[i] = IconPixel.Transparent;
+                        continue;
+                    }
+                    Color.RGBToHSV(px, out float h, out float s, out _);
+                    if (!(s > 0.35f && h > 0.12f && h < 0.36f))
+                    {
+                        result[i] = IconPixel.Stone;
+                        continue;
+                    }
+                    bool nearEdge = false;
+                    for (int dy = -edgeRadius; dy <= edgeRadius && !nearEdge; dy++)
+                    {
+                        for (int dx = -edgeRadius; dx <= edgeRadius; dx++)
+                        {
+                            int nx = x + dx, ny = y + dy;
+                            if (nx < 0 || ny < 0 || nx >= width || ny >= height || source[ny * width + nx].a < 40)
+                            {
+                                nearEdge = true;
+                                break;
+                            }
+                        }
+                    }
+                    result[i] = nearEdge ? IconPixel.Outline : IconPixel.Rune;
+                }
+            }
+            return result;
+        }
+
+        private static Color32[] RecolorIcon(Color32[] source, IconPixel[] classes, Color stone, bool whiteRunes)
+        {
+            var result = new Color32[source.Length];
+            Color outline = Color.Lerp(stone, Color.white, 0.35f);
+            for (int i = 0; i < source.Length; i++)
+            {
+                Color32 px = source[i];
+                Color.RGBToHSV(px, out _, out _, out float v);
+                Color c;
+                switch (classes[i])
+                {
+                    case IconPixel.Transparent:
+                        result[i] = px;
+                        continue;
+                    case IconPixel.Rune:
+                        c = whiteRunes ? Color.Lerp(Color.white * 0.75f, Color.white, v) : Color.Lerp(Color.black, Color.white * 0.12f, v);
+                        break;
+                    case IconPixel.Outline:
+                        c = outline * Mathf.Clamp01(0.4f + v * 0.8f);
+                        break;
+                    default:
+                        c = stone * Mathf.Clamp01(0.55f + v * 1.5f);
+                        break;
+                }
+                c.a = px.a / 255f;
+                result[i] = c;
+            }
+            return result;
+        }
+
+        private enum IconPixel : byte
+        {
+            Transparent,
+            Stone,
+            Rune,
+            Outline,
+        }
+
+        private RuneColor ResolveRuneColor(HexColor hex)
+        {
+            RuneColor rune = hex.runeColor.Value;
+            if (rune == RuneColor.Auto)
+            {
+                rune = hex.stone.Value.grayscale > AutoRuneLuminanceThreshold ? RuneColor.Black : RuneColor.White;
+            }
+            return rune;
+        }
+
+        private void Update()
+        {
+            if (configFileChanged)
+            {
+                configFileChanged = false;
+                configReloadTime = Time.unscaledTime + 0.3f;
+            }
+            if (configReloadTime > 0f && Time.unscaledTime >= configReloadTime)
+            {
+                configReloadTime = 0f;
+                try
+                {
+                    Config.Reload();
+                }
+                catch (System.Exception e)
+                {
+                    Logger.LogWarning("Couldn't reload config: " + e.Message);
+                }
+                ApplyAllHexColors();
+            }
+        }
+
+        private void WatchConfigFile()
+        {
+            try
+            {
+                configWatcher = new FileSystemWatcher(System.IO.Path.GetDirectoryName(Config.ConfigFilePath), System.IO.Path.GetFileName(Config.ConfigFilePath))
+                {
+                    NotifyFilter = NotifyFilters.LastWrite | NotifyFilters.Size,
+                };
+                configWatcher.Changed += (_, __) => configFileChanged = true;
+                configWatcher.Created += (_, __) => configFileChanged = true;
+                configWatcher.EnableRaisingEvents = true;
+            }
+            catch (System.Exception e)
+            {
+                Logger.LogWarning("Couldn't watch the config file; color changes need a restart: " + e.Message);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            configWatcher?.Dispose();
+        }
+
+        private void LogHexMaterials(string hexName, List<Renderer> renderers)
+        {
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine($"[Hex Colors] {hexName}: {renderers.Count} renderer(s)");
+            foreach (Renderer renderer in renderers)
+            {
+                if (!renderer)
+                {
+                    continue;
+                }
+                sb.AppendLine($"  {renderer.GetType().Name} '{renderer.name}' (root '{renderer.transform.root.name}')");
+                foreach (Material material in renderer.sharedMaterials)
+                {
+                    if (!material)
+                    {
+                        continue;
+                    }
+                    Shader shader = material.shader;
+                    sb.AppendLine($"    material '{material.name}', shader '{(shader ? shader.name : "none")}'");
+                    if (!shader)
+                    {
+                        continue;
+                    }
+                    for (int i = 0; i < shader.GetPropertyCount(); i++)
+                    {
+                        string prop = shader.GetPropertyName(i);
+                        string value;
+                        switch (shader.GetPropertyType(i))
+                        {
+                            case UnityEngine.Rendering.ShaderPropertyType.Color:
+                                value = material.GetColor(prop).ToString();
+                                break;
+                            case UnityEngine.Rendering.ShaderPropertyType.Texture:
+                                Texture tex = material.GetTexture(prop);
+                                value = tex ? tex.name : "none";
+                                break;
+                            case UnityEngine.Rendering.ShaderPropertyType.Vector:
+                                value = material.GetVector(prop).ToString();
+                                break;
+                            default:
+                                value = material.GetFloat(prop).ToString("0.###");
+                                break;
+                        }
+                        sb.AppendLine($"      {prop} = {value}");
+                    }
+                }
+            }
+            Logger.LogInfo(sb.ToString());
+        }
+
+        private class RecoloredMaterial
+        {
+            public Material material;
+            public Material original;
+            public HexColor hex;
+            public bool isRunes;
+        }
+
+        private class HexColor
+        {
+            public string name;
+            public System.Func<ItemDef> getItem;
+            public ConfigEntry<Color> stone;
+            public ConfigEntry<RuneColor> runeColor;
+            public ItemDef item;
+            public Sprite originalIcon;
+            public AssetReferenceT<Sprite> originalIconReference;
+            public Sprite icon;
+            public Color32[] originalIconPixels;
+            public IconPixel[] iconClasses;
+        }
+
+        public enum RuneColor
+        {
+            Auto,
+            White,
+            Black,
         }
 
         private class HolderOnlyMarker : MonoBehaviour
