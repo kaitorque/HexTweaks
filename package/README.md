@@ -17,6 +17,8 @@ Everyone in the lobby needs this mod, with the same version (it adds a custom bu
 
 Every change can be turned off and tuned in `kaitorque.HexTweaks.cfg`.
 
+With [LookingGlass](https://thunderstore.io/c/riskofrain2/p/DropPod/LookingGlass/) installed, its item stats for the changed hexes show the HexTweaks effects.
+
 ## Hex Colors
 
 In vanilla, every hex is the same dark stone with the same yellow-green runes. HexTweaks gives each of the 14 hexes its own stone color, with white or black runes picked for contrast, so you can tell them apart from a distance. Inventory icons are recolored to match.
