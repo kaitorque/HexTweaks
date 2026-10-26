@@ -8,6 +8,7 @@ if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
 $package = Join-Path $dir "package"
 Copy-Item (Join-Path $dir "bin\Release\netstandard2.1\$name.dll") $package -Force
+Copy-Item (Join-Path $dir "LICENSE") $package -Force
 
 $version = (Get-Content (Join-Path $package "manifest.json") -Raw | ConvertFrom-Json).version_number
 $zip = Join-Path (Split-Path $dir -Parent) "Kaitorque-$name-$version.zip"

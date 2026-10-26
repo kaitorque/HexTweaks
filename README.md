@@ -48,3 +48,7 @@ Requires the .NET SDK. Paths to the game and the r2modman profile are set in `He
 ```
 
 This builds the plugin and creates a Thunderstore/r2modman-importable zip next to the repo folder.
+
+## License
+
+[MIT](LICENSE)
