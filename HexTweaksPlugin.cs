@@ -14,8 +14,9 @@ namespace HexTweaks
 {
     [BepInDependency("com.bepis.r2api.content_management")]
     [BepInDependency("com.bepis.r2api.recalculatestats")]
+    [BepInDependency(LookingGlassGuid, BepInDependency.DependencyFlags.SoftDependency)]
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
-    public class HexTweaksPlugin : BaseUnityPlugin
+    public partial class HexTweaksPlugin : BaseUnityPlugin
     {
         public const string PluginGuid = "kaitorque.HexTweaks";
         public const string PluginName = "HexTweaks";
@@ -131,6 +132,10 @@ namespace HexTweaks
             BindHexColor("Hex of Blindness", () => DLC4Content.Items.Blindness, "#1A1A1A");
             ItemCatalog.availability.CallWhenAvailable(IndexHexColors);
             PickupCatalog.availability.CallWhenAvailable(LoadHexIcons);
+            if (BepInEx.Bootstrap.Chainloader.PluginInfos.ContainsKey(LookingGlassGuid))
+            {
+                PickupCatalog.availability.CallWhenAvailable(RegisterLookingGlassStats);
+            }
             On.RoR2.PickupDisplay.OnModelInstanceDiscovered += PickupDisplay_OnModelInstanceDiscovered;
             Config.SettingChanged += (_, __) => ApplyAllHexColors();
             WatchConfigFile();

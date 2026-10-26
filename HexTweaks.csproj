@@ -18,6 +18,7 @@
     <Reference Include="MonoMod.RuntimeDetour" HintPath="$(Profile)\core\MonoMod.RuntimeDetour.dll" Private="false" />
     <Reference Include="R2API.ContentManagement" HintPath="$(Profile)\plugins\RiskofThunder-R2API_ContentManagement\R2API.ContentManagement\R2API.ContentManagement.dll" Private="false" />
     <Reference Include="R2API.RecalculateStats" HintPath="$(Profile)\plugins\RiskofThunder-R2API_RecalculateStats\R2API.RecalculateStats\R2API.RecalculateStats.dll" Private="false" />
+    <Reference Include="LookingGlass" HintPath="$(Profile)\plugins\DropPod-LookingGlass\LookingGlass\LookingGlass.dll" Private="false" />
     <Reference Include="RoR2" HintPath="$(GameManaged)\RoR2.dll" Private="false" />
     <Reference Include="UnityEngine" HintPath="$(GameManaged)\UnityEngine.dll" Private="false" />
     <Reference Include="UnityEngine.CoreModule" HintPath="$(GameManaged)\UnityEngine.CoreModule.dll" Private="false" />
