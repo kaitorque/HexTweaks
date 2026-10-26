@@ -92,8 +92,8 @@ namespace HexTweaks
                 "Hex of Strife no longer adds Shrine of the Mountain effects to the teleporter. Instead, bosses deal more damage to the holder.");
             strifeDamagePerStack = Config.Bind("Hex of Strife", "Boss Damage Taken Per Stack", 0.3f,
                 "Extra damage the holder takes from bosses per stack. 0.3 = +30% per stack.");
-            strifeBossDamageDealtReductionPerStack = Config.Bind("Hex of Strife", "Boss Damage Dealt Reduction Per Stack", 0.2f,
-                "Holder deals less damage to bosses per stack, applied multiplicatively. 0.2 = 20% less with 1 stack, 36% less with 2.");
+            strifeBossDamageDealtReductionPerStack = Config.Bind("Hex of Strife", "Boss Damage Dealt Reduction Per Stack", 0.25f,
+                "Holder deals less damage to bosses per stack, applied multiplicatively. 0.25 = 25% less with 1 stack, 44% less with 2.");
             ossificationEnabled = Config.Bind("Hex of Ossification", "Enabled", true,
                 "Hex of Ossification no longer gives enemies barrier. Instead, after the holder kills an enemy, the holder deals less damage for a few seconds.");
             ossificationDamageReduction = Config.Bind("Hex of Ossification", "Damage Reduction", 0.3f,
