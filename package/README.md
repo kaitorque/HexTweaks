@@ -14,6 +14,7 @@ Everyone in the lobby needs this mod, with the same version (it adds a custom bu
 | Hex of Ossification | Kills give nearby enemies barrier | After a kill, holder gets a debuff (shown with the hex's icon) and deals 30% less damage for 5s (+2s per stack) |
 | Hex of Greed | Copies your items to enemies | Holder earns 25% less gold per stack (multiplicative) |
 | Hex of Mimicry | Spawns Mimics | Mimics only target the player who spawned them |
+| Hex of Haunting | Poltergeists can target anyone | Poltergeists only target the player who triggered them |
 
 Every change can be turned off and tuned in `kaitorque.HexTweaks.cfg`.
 

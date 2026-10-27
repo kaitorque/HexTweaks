@@ -20,7 +20,7 @@ namespace HexTweaks
     {
         public const string PluginGuid = "kaitorque.HexTweaks";
         public const string PluginName = "HexTweaks";
-        public const string PluginVersion = "1.0.3";
+        public const string PluginVersion = "1.0.4";
 
         private static readonly FieldInfo PatienceControllersField =
             typeof(OutOfTPRadiusManager).GetField("_teamIndextoFogDamageController", BindingFlags.NonPublic | BindingFlags.Static);
@@ -34,7 +34,7 @@ namespace HexTweaks
         private static HolderOnlyMarker tickingPatienceController;
 
         private static BuffDef ossificationBuff;
-        private static readonly Dictionary<RoR2.CharacterAI.BaseAI, CharacterMaster> mimicOwners = new Dictionary<RoR2.CharacterAI.BaseAI, CharacterMaster>();
+        private static readonly Dictionary<CharacterMaster, CharacterMaster> hunterTargets = new Dictionary<CharacterMaster, CharacterMaster>();
 
         private ConfigEntry<bool> rainEnabled;
         private ConfigEntry<float> rainDamagePerStack;
@@ -53,6 +53,7 @@ namespace HexTweaks
         private ConfigEntry<bool> greedEnabled;
         private ConfigEntry<float> greedGoldReductionPerStack;
         private ConfigEntry<bool> mimicryEnabled;
+        private ConfigEntry<bool> hauntingEnabled;
         private ConfigEntry<bool> hexColorsEnabled;
         private ConfigEntry<bool> logHexMaterials;
         private ConfigEntry<float> stoneGlow;
@@ -108,6 +109,8 @@ namespace HexTweaks
                 "Gold reduction per stack, applied multiplicatively. 0.25 = 25% less gold with 1 stack, 44% less with 2.");
             mimicryEnabled = Config.Bind("Hex of Mimicry", "Enabled", true,
                 "Mimics spawned by Hex of Mimicry only target the player who spawned them.");
+            hauntingEnabled = Config.Bind("Hex of Haunting", "Enabled", true,
+                "Poltergeists from Hex of Haunting only target the player who triggered them.");
             hexColorsEnabled = Config.Bind("Hex Colors", "Enabled", true,
                 "Recolors each hex pickup's stone and runes so they can be told apart.");
             stoneGlow = Config.Bind("Hex Colors", "Stone Glow", 4.5f,
@@ -148,7 +151,8 @@ namespace HexTweaks
             On.RoR2.CharacterMaster.AddDeployable += CharacterMaster_AddDeployable;
             On.RoR2.CharacterAI.BaseAI.ManagedFixedUpdate += BaseAI_ManagedFixedUpdate;
             On.RoR2.CharacterAI.BaseAI.FindEnemyHurtBox += BaseAI_FindEnemyHurtBox;
-            Stage.onServerStageBegin += _ => mimicOwners.Clear();
+            On.RoR2.HauntedInteractable.OnTriggerStay += HauntedInteractable_OnTriggerStay;
+            Stage.onServerStageBegin += _ => hunterTargets.Clear();
 
             ossificationBuff = ScriptableObject.CreateInstance<BuffDef>();
             ossificationBuff.name = "bdHexTweaksOssification";
@@ -266,16 +270,26 @@ namespace HexTweaks
                 return;
             }
             CharacterBody mimicBody = deployable.GetComponent<CharacterBody>();
-            RoR2.CharacterAI.BaseAI ai = mimicBody && mimicBody.master ? mimicBody.master.GetComponent<RoR2.CharacterAI.BaseAI>() : null;
-            if (ai)
+            if (mimicBody && mimicBody.master)
             {
-                mimicOwners[ai] = self;
+                hunterTargets[mimicBody.master] = self;
             }
         }
 
+        private void HauntedInteractable_OnTriggerStay(On.RoR2.HauntedInteractable.orig_OnTriggerStay orig, HauntedInteractable self, Collider other)
+        {
+            CharacterMaster before = self.poltergeistMasterInstance;
+            orig(self, other);
+            CharacterMaster poltergeist = self.poltergeistMasterInstance;
+            if (!hauntingEnabled.Value || !poltergeist || poltergeist == before || !other.TryGetComponent(out CharacterBody victim) || !victim.master)
+            {
+                return;
+            }
+            hunterTargets[poltergeist] = victim.master;
+        }
         private void BaseAI_ManagedFixedUpdate(On.RoR2.CharacterAI.BaseAI.orig_ManagedFixedUpdate orig, RoR2.CharacterAI.BaseAI self, float deltaTime)
         {
-            if (mimicOwners.TryGetValue(self, out CharacterMaster owner))
+            if (self.master && hunterTargets.TryGetValue(self.master, out CharacterMaster owner))
             {
                 CharacterBody ownerBody = owner ? owner.GetBody() : null;
                 if (ownerBody && ownerBody.healthComponent && ownerBody.healthComponent.alive)
@@ -298,7 +312,7 @@ namespace HexTweaks
 
         private HurtBox BaseAI_FindEnemyHurtBox(On.RoR2.CharacterAI.BaseAI.orig_FindEnemyHurtBox orig, RoR2.CharacterAI.BaseAI self, float maxDistance, bool full360Vision, bool filterByLoS)
         {
-            if (mimicOwners.TryGetValue(self, out CharacterMaster owner))
+            if (self.master && hunterTargets.TryGetValue(self.master, out CharacterMaster owner))
             {
                 CharacterBody ownerBody = owner ? owner.GetBody() : null;
                 return ownerBody && ownerBody.healthComponent && ownerBody.healthComponent.alive ? ownerBody.mainHurtBox : null;
@@ -448,6 +462,10 @@ namespace HexTweaks
                     return orig(self, token) + " It only hunts <style=cDeath>you</style>.";
                 case "ITEM_MIMICRY_DESC" when mimicryEnabled.Value:
                     return orig(self, token) + " The Mimic only targets <style=cDeath>you</style>.";
+                case "ITEM_HEXHAUNTING_PICKUP" when hauntingEnabled.Value:
+                    return orig(self, token) + " They only hunt <style=cDeath>you</style>.";
+                case "ITEM_HEXHAUNTING_DESC" when hauntingEnabled.Value:
+                    return orig(self, token) + " The Poltergeist only targets <style=cDeath>you</style>.";
             }
             return orig(self, token);
         }

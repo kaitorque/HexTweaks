@@ -1,3 +1,6 @@
+## v1.0.4
+- Hex of Haunting: Poltergeists only target the player who triggered them. Their thrown interactable can still splash anyone nearby.
+
 ## v1.0.3
 - Hex of Strife now makes the holder deal 25% less damage to bosses per stack by default (was 20%), so it stands apart from Hex of Rain. Existing configs keep their current value.
 - Added this changelog.
