@@ -1,3 +1,6 @@
+## v1.0.5
+- Fixed the plugin reporting version 1.0.3 in the BepInEx log. No gameplay changes.
+
 ## v1.0.4
 - Hex of Haunting: Poltergeists only target the player who triggered them. Their thrown interactable can still splash anyone nearby.
 

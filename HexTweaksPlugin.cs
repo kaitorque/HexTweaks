@@ -20,7 +20,7 @@ namespace HexTweaks
     {
         public const string PluginGuid = "kaitorque.HexTweaks";
         public const string PluginName = "HexTweaks";
-        public const string PluginVersion = "1.0.4";
+        public const string PluginVersion = "1.0.5";
 
         private static readonly FieldInfo PatienceControllersField =
             typeof(OutOfTPRadiusManager).GetField("_teamIndextoFogDamageController", BindingFlags.NonPublic | BindingFlags.Static);
